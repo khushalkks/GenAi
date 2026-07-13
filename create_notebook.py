@@ -1,0 +1,234 @@
+import json
+import os
+
+# Define the notebook structure
+notebook = {
+    "cells": [
+        {
+            "cell_type": "markdown",
+            "metadata": {},
+            "source": [
+                "# AI Product Intelligence System\n",
+                "### Gen AI Bootcamp - Day 2 Homework Challenge\n",
+                "\n",
+                "This notebook implements the three tasks required for the Day 2 Homework Challenge:\n",
+                "1. **Task 1: Smart Product Recommendation Engine** (Suggesting complementary items)\n",
+                "2. **Task 2: Unique Product Catalog Creation** (Grouping duplicates using CLIP embeddings)\n",
+                "3. **Task 3: Reverse Product Search** (Text-to-Image search using CLIP)"
+            ]
+        },
+        {
+            "cell_type": "markdown",
+            "metadata": {},
+            "source": [
+                "## Setup and Preprocessing\n",
+                "\n",
+                "We will load the dataset programmatically, filter to items with valid images, and set up our CLIP embedding environment."
+            ]
+        },
+        {
+            "cell_type": "code",
+            "execution_count": None,
+            "metadata": {},
+            "outputs": [],
+            "source": [
+                "import os\n",
+                "import pandas as pd\n",
+                "import numpy as np\n",
+                "import pickle\n",
+                "import torch\n",
+                "from PIL import Image\n",
+                "import kagglehub\n",
+                "from sentence_transformers import SentenceTransformer\n",
+                "from IPython.display import display, Image as IPImage\n",
+                "import matplotlib.pyplot as plt\n",
+                "\n",
+                "# 1. Download/Retrieve Dataset\n",
+                "print(\"Retrieving dataset path...\")\n",
+                "dataset_dir = kagglehub.dataset_download('paramaggarwal/fashion-product-images-small')\n",
+                "print(f\"Dataset location: {dataset_dir}\")\n",
+                "\n",
+                "# 2. Load styles.csv with error-skipping for malformed lines\n",
+                "csv_path = os.path.join(dataset_dir, \"styles.csv\")\n",
+                "df_raw = pd.read_csv(csv_path, on_bad_lines='skip')\n",
+                "df_raw['id'] = df_raw['id'].astype(str)\n",
+                "images_dir = os.path.join(dataset_dir, \"images\")\n",
+                "df_raw['image_path'] = df_raw['id'].apply(lambda x: os.path.join(images_dir, f'{x}.jpg'))\n",
+                "\n",
+                "# Filter to existing files only\n",
+                "df = df_raw[df_raw['image_path'].apply(os.path.exists)].reset_index(drop=True)\n",
+                "print(f\"Total items with images: {len(df)}\")"
+            ]
+        },
+        {
+            "cell_type": "markdown",
+            "metadata": {},
+            "source": [
+                "### Feature Extraction (CLIP Embeddings)\n",
+                "\n",
+                "We will sample a subset of the dataset (e.g. 3,000 items) to keep computation fast while maintaining a rich set of categories. We will use the pre-trained `clip-ViT-B-32` model."
+            ]
+        },
+        {
+            "cell_type": "code",
+            "execution_count": None,
+            "metadata": {},
+            "outputs": [],
+            "source": [
+                "from src.utils import get_or_create_embeddings\n",
+                "\n",
+                "# Load or generate CLIP embeddings (default sample size: 3000)\n",
+                "df_sampled, image_embeddings, text_embeddings = get_or_create_embeddings(df, sample_size=3000)\n",
+                "print(f\"Sample size: {len(df_sampled)}\")\n",
+                "print(f\"Image embeddings shape: {image_embeddings.shape}\")\n",
+                "print(f\"Text embeddings shape: {text_embeddings.shape}\")"
+            ]
+        },
+        {
+            "cell_type": "markdown",
+            "metadata": {},
+            "source": [
+                "## Task 1: Smart Product Recommendation Engine\n",
+                "\n",
+                "Visual search finds items that are *visually identical*. But e-commerce systems need to recommend **complementary** items (e.g., Running Shoes suggest Socks, Fitness Watch, Sports Bottle). \n",
+                "\n",
+                "**Our Approach:** We define rules linking categories to matching complementary categories, filter candidates for gender and usage (e.g. Sports vs. Casual), and then rank candidates using CLIP embedding similarity."
+            ]
+        },
+        {
+            "cell_type": "code",
+            "execution_count": None,
+            "metadata": {},
+            "outputs": [],
+            "source": [
+                "from src.recommender import get_complementary_recommendations\n",
+                "\n",
+                "# Let's find a running shoe in the dataset to test\n",
+                "shoes = df_sampled[df_sampled['subCategory'] == 'Shoes']\n",
+                "sports_shoes = shoes[shoes['usage'] == 'Sports']\n",
+                "\n",
+                "if len(sports_shoes) > 0:\n",
+                "    sample_shoe = sports_shoes.iloc[0]\n",
+                "else:\n",
+                "    sample_shoe = shoes.iloc[0]\n",
+                "    \n",
+                "print(f\"Input Product: {sample_shoe['productDisplayName']} (ID: {sample_shoe['id']})\")\n",
+                "display(IPImage(filename=sample_shoe['image_path'], width=150))\n",
+                "\n",
+                "print(\"\\n--- Generating Complementary Recommendations ---\")\n",
+                "recs = get_complementary_recommendations(sample_shoe['id'], df_sampled, image_embeddings, top_k=3)\n",
+                "\n",
+                "for idx, rec in enumerate(recs):\n",
+                "    print(f\"\\nRecommendation {idx+1}: {rec['relationship']} ({rec['productDisplayName']})\")\n",
+                "    print(f\"  Match Score: {rec['score']:.4f} | Gender: {rec['gender']} | Color: {rec['baseColour']}\")\n",
+                "    display(IPImage(filename=rec['image_path'], width=120))"
+            ]
+        },
+        {
+            "cell_type": "markdown",
+            "metadata": {},
+            "source": [
+                "## Task 2: Unique Product Catalog Creation\n",
+                "\n",
+                "Marketplaces often have redundant or near-duplicate listings upload by multiple sellers. \n",
+                "\n",
+                "**Our Approach:** We group items using leader clustering based on a high cosine similarity threshold (e.g., 0.88). For each group, we compute the medoid representative, clean the display names of trailing tokens/packs, and output a clean, unique product catalog."
+            ]
+        },
+        {
+            "cell_type": "code",
+            "execution_count": None,
+            "metadata": {},
+            "outputs": [],
+            "source": [
+                "from src.catalog import create_unique_catalog\n",
+                "\n",
+                "# Create the unique catalog\n",
+                "unique_df, mapping, duplicates, stats = create_unique_catalog(df_sampled, image_embeddings, similarity_threshold=0.88)\n",
+                "\n",
+                "print(\"--- Catalog Deduplication Summary Statistics ---\")\n",
+                "for key, val in stats.items():\n",
+                "    print(f\"{key.replace('_', ' ').title()}: {val}\")\n",
+                "\n",
+                "# Print some of the duplicate groups identified\n",
+                "print(\"\\n--- Sample Duplicate Groups Found ---\")\n",
+                "for idx, cluster in enumerate(duplicates[:3]):\n",
+                "    print(f\"\\nCluster {idx+1} (Representative: {cluster['representative_name']})\")\n",
+                "    print(f\"Contains {len(cluster['items'])} items:\")\n",
+                "    for item in cluster['items']:\n",
+                "        print(f\" - ID: {item['id']} | Name: {item['productDisplayName']}\")\n",
+                "        display(IPImage(filename=item['image_path'], width=100))"
+            ]
+        },
+        {
+            "cell_type": "markdown",
+            "metadata": {},
+            "source": [
+                "## Task 3: Reverse Product Search\n",
+                "\n",
+                "Allow users to search the database using free-text queries. \n",
+                "\n",
+                "**Our Approach:** Encode the text query into the CLIP shared text-image space, and compute cosine similarity against the pre-computed image embeddings."
+            ]
+        },
+        {
+            "cell_type": "code",
+            "execution_count": None,
+            "metadata": {},
+            "outputs": [],
+            "source": [
+                "from src.search import reverse_product_search\n",
+                "\n",
+                "# Define search queries to test\n",
+                "queries = [\n",
+                "    \"blue casual shirt\",\n",
+                "    \"red athletic shoes\",\n",
+                "    \"leather ladies handbag\"\n",
+                "]\n",
+                "\n",
+                "for query in queries:\n",
+                "    print(f\"\\n\\nQuery: '{query}'\")\n",
+                "    print(\"=\"*40)\n",
+                "    results = reverse_product_search(query, df_sampled, image_embeddings, top_k=4)\n",
+                "    \n",
+                "    # Plot results in a grid\n",
+                "    fig, axes = plt.subplots(1, len(results), figsize=(12, 3))\n",
+                "    if len(results) == 1:\n",
+                "        axes = [axes]\n",
+                "        \n",
+                "    for ax, res in zip(axes, results):\n",
+                "        img = Image.open(res['image_path'])\n",
+                "        ax.imshow(img)\n",
+                "        ax.axis('off')\n",
+                "        ax.set_title(f\"{res['productDisplayName'][:15]}...\\nMatch: {res['score']*100:.1f}%\", fontsize=9)\n",
+                "    plt.show()"
+            ]
+        }
+    ],
+    "metadata": {
+        "kernelspec": {
+            "display_name": "Python 3",
+            "language": "python",
+            "name": "python3"
+        },
+        "language_info": {
+            "codemirror_mode": {
+                "name": "ipython",
+                "version": 3
+            },
+            "file_extension": ".py",
+            "mimetype": "text/x-python",
+            "name": "python",
+            "nbconvert_exporter": "python",
+            "pygments_lexer": "ipython3",
+            "version": "3.10.0"
+        }
+    },
+    "nbformat": 4,
+    "nbformat_minor": 2
+}
+
+# Write the notebook JSON to the destination file
+with open('Bootcamp_Day2_Homework.ipynb', 'w') as f:
+    json.dump(notebook, f, indent=2)
+print("Jupyter notebook created successfully.")

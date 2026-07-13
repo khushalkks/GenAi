@@ -1,0 +1,28 @@
+# Python Cache
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Embeddings & Large Data Caches
+embeddings_cache.pkl
+*.pkl
+*.zip
+*.tar.gz
+
+# Virtual Environments
+venv/
+.venv/
+env/
+ENV/
+conda-env/
+
+# Jupyter Notebook Checkpoints
+.ipynb_checkpoints/
+
+# IDE Settings
+.vscode/
+.idea/
+
+# OS-specific files
+.DS_Store
+Thumbs.db
