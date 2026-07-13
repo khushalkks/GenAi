@@ -69,3 +69,11 @@ Enables natural language text search against product image databases by mapping 
 4.  **Run the Self-Contained Notebook:**
     *   Open `Bootcamp_Day2_Homework.ipynb` in VS Code or Jupyter Lab.
     *   Run cells sequentially to download the Kaggle dataset programmatically and execute verification.
+
+---
+
+## 👨‍💻 Author & Contributors
+
+*   **Khushal** - *Developer & Project Lead* - [@khushalkks](https://github.com/khushalkks)
+
+Contributions are always welcome! Feel free to open issues or submit pull requests to make this engine even better. ⭐
